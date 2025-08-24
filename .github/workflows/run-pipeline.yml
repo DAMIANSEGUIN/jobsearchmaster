@@ -1,0 +1,44 @@
+name: JobSearchMaster Daily
+on:
+  schedule:
+    - cron: "17 10 * * *"
+  workflow_dispatch: {}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas python-dateutil
+      - name: Prepare WIMD profile
+        run: |
+          mkdir -p config export
+          if [ -n "${{ secrets.WIMD_PROFILE_JSON }}" ]; then
+            echo "${{ secrets.WIMD_PROFILE_JSON }}" > config/wimd_profile.json
+          elif [ ! -f config/wimd_profile.json ]; then
+            printf "{\"skills\":[\"facilitation\",\"strategy\",\"product discovery\"],\"passions\":[\"career coaching\",\"AI tooling\",\"outcome design\"],\"pivot_paths\":[\"fractional strategist\",\"innovation lead\"]}\n" > config/wimd_profile.json
+          fi
+      - name: Run pipeline
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: |
+          python pipeline/fetch_and_enrich.py
+      - name: Commit CSVs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add export/*.csv || true
+          git commit -m "chore: update leads CSV ($(date -u +"%Y-%m-%dT%H:%M:%SZ"))" || echo "No changes"
+          git push
+
