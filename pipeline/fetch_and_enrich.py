@@ -1,45 +1,71 @@
 import os, json, time, requests, pandas as pd
-from datetime import datetime
-from dateutil import tz
+from datetime import datetime, timezone
 
-UTC = tz.tzutc()
-TODAY = datetime.now(UTC).strftime(%Y-%m-%d)
+TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 OUT = f"export/jobsearchmaster_leads_{TODAY}.csv"
 
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
 REMOTEOK_URL = "https://remoteok.io/api"
-TORRE_URL = "https://search.torre.co/opportunities/_search/?size=100"
+TORRE_URL    = "https://search.torre.co/opportunities/_search/?size=100"
+UA = {"User-Agent":"jobsearchmaster-action/1.0 (+https://github.com)"}
 
 def load_wimd():
-    p = config/wimd_profile.json
+    p = "config/wimd_profile.json"
     if os.path.exists(p):
-        with open(p, r) as f: return json.load(f)
+        with open(p, "r") as f: 
+            return json.load(f)
     return {"skills": [], "passions": [], "pivot_paths": []}
 
 def fetch_remotive():
-    r = requests.get(REMOTIVE_URL, timeout=30)
+    r = requests.get(REMOTIVE_URL, headers=UA, timeout=30)
     r.raise_for_status()
-    return [{"source":"Remotive","title":j.get("title"),"company":j.get("company_name"),
-             "location":j.get("candidate_required_location"),"assignment_type":j.get("job_type"),
-             "apply_url":j.get("url"),"raw":j} for j in r.json().get("jobs",[])]
+    jobs = r.json().get("jobs", [])
+    return [{
+        "source":"Remotive",
+        "title": j.get("title"),
+        "company": j.get("company_name"),
+        "location": j.get("candidate_required_location"),
+        "assignment_type": j.get("job_type"),
+        "apply_url": j.get("url"),
+        "raw": j
+    } for j in jobs]
 
 def fetch_remoteok():
-    r = requests.get(REMOTEOK_URL, headers={"User-Agent":"Mozilla/5.0"}, timeout=30)
+    r = requests.get(REMOTEOK_URL, headers=UA, timeout=30)
     r.raise_for_status()
     data = r.json()
     if data and isinstance(data, list) and "jobs" in data[0]:
         data = data[0]["jobs"]
-    return [{"source":"RemoteOK","title":j.get("position") or j.get("title"),
-             "company":j.get("company"),"location":j.get("location") or "Remote",
-             "assignment_type":j.get("tags"),"apply_url":j.get("url"),"raw":j} for j in data]
+    rows = []
+    for j in data:
+        rows.append({
+            "source":"RemoteOK",
+            "title": j.get("position") or j.get("title"),
+            "company": j.get("company"),
+            "location": j.get("location") or "Remote",
+            "assignment_type": j.get("tags"),
+            "apply_url": j.get("url"),
+            "raw": j
+        })
+    return rows
 
 def fetch_torre():
     payload = {"and":[{"remote":{"eq":True}},{"active":{"eq":True}}],"size":50}
-    r = requests.post(TORRE_URL, json=payload, timeout=30)
+    r = requests.post(TORRE_URL, json=payload, headers=UA, timeout=30)
     r.raise_for_status()
-    return [{"source":"Torre","title":j.get("objective"),"company":(j.get("organizations") or [{}])[0].get("name"),
-             "location":"Remote","assignment_type":j.get("type"),
-             "apply_url":f"https://torre.co/jobs/{j.get(id)}","raw":j} for j in r.json().get("results",[])]
+    data = r.json().get("results", [])
+    rows = []
+    for j in data:
+        rows.append({
+            "source":"Torre",
+            "title": j.get("objective"),
+            "company": (j.get("organizations") or [{}])[0].get("name"),
+            "location":"Remote",
+            "assignment_type": j.get("type"),
+            "apply_url": f"https://torre.co/jobs/{j.get(id)}",
+            "raw": j
+        })
+    return rows
 
 def main():
     wimd = load_wimd()
@@ -51,7 +77,7 @@ def main():
         except Exception as e:
             print(f"Error: {fn.__name__} {e}")
     df = pd.DataFrame(all_rows)
-    os.makedirs(export, exist_ok=True)
+    os.makedirs("export", exist_ok=True)
     df.to_csv(OUT, index=False)
     print(f"Wrote {OUT} with {len(df)} rows.")
 
